@@ -10,5 +10,11 @@
             "url": "heroku/python"
         }
     ],
-    "stack": "heroku-20"
+    "stack": "heroku-20",
+    "formation": {
+        "web": {
+            "quantity": 2,
+            "size": "Free"
+        }
+    }
 }
