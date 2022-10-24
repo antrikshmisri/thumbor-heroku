@@ -1,22 +1,59 @@
 import os
-from subprocess import PIPE, Popen
+from hmac import new as new_digester
+from hashlib import sha1
+from base64 import urlsafe_b64encode
 
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
 
-def run_command(command):
-    p = Popen(command, stdout=PIPE, stderr=PIPE)
-    out, err = p.communicate()
+def generate_signature(key, unsafe_url):
+  """Generate a signature from the given key.
+  
+  Parameters
+  ----------
+  key: str
+    The key to use for the signature
 
-    _return_dict = {
-        "out": out,
-        "err": err,
-        "returncode": p.returncode
-    }
+  Returns
+  -------
+  str
+    The signature string
+  """
+  unsafe_url = bytes(unsafe_url, 'utf-8')
+  key = bytes(key, 'utf-8')
 
-    return _return_dict
+  digester = new_digester(key, unsafe_url, sha1)
+  signature = digester.digest()
+
+  safe_signature = urlsafe_b64encode(signature)
+  return str(safe_signature, 'utf-8')
+
+
+def generate_safe_url(key, width, height, image_url):
+  """Generate a safe url from the given parameters.
+  
+  Parameters
+  ----------
+  width: int
+    The width of the image
+
+  height: int
+    The height of the image
+
+  image_url: str
+    The url of the image
+
+  Returns
+  -------
+  str
+    The safe url
+  """
+  unsafe_url = f"{width}x{height}/{image_url}"
+  signature = generate_signature(key, unsafe_url)
+  safe_url = f"/{signature}/{unsafe_url}"
+  return safe_url
 
 
 @app.route('/', methods=['GET'])
@@ -26,6 +63,7 @@ def index():
 
 @app.route('/encode', methods=['GET'])
 def encode():
+  key = os.getenv('KEY', "1234567890")
   query_params = request.args.to_dict()
 
   width = query_params.get('width')
@@ -41,27 +79,13 @@ def encode():
   except ValueError:
     return jsonify({'error': 'Invalid width or height'}), 400
 
-  _command = f"thumbor-url --key='1234567890' --width={width} --height={height} {image_url}"
-  _output = run_command(_command)
-
-  if _output["err"]:
-    return jsonify({'error': 'Something went wrong'}), 500
-
-  _replace_sequence = [
-      "\r\n",
-      "URL:"
-  ]
-
-  _output["out"] = _output["out"].decode('utf-8')
-
-  for _replace in _replace_sequence:
-    _output["out"] = _output["out"].replace(_replace, "")
+  safe_url = generate_safe_url(key, width, height, image_url)
 
   _host_name = request.url_root.split(":")
   _host_name.pop()
   _host_name = ":".join(_host_name)
-  
-  _server_url = f"{_host_name}:{os.getenv('THUMBOR_PORT', 8080)}"
-  _output["out"] = _server_url + _output["out"]
 
-  return jsonify({'url': _output["out"]}), 200
+  _server_url = f"{_host_name}:{os.getenv('THUMBOR_PORT', 8080)}"
+  safe_url = _server_url + safe_url
+
+  return jsonify({'url': safe_url}), 200
